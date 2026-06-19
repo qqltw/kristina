@@ -1,4 +1,4 @@
-import { detectAssetType } from "./auditFallbacks";
+import { detectAssetType } from "./auditFallbacks.js";
 
 // Generate styled HTML template for export (Apple Premium Aesthetic)
 export function generateHtmlReport(data: any, siteUrl: string): string {

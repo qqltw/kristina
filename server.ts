@@ -7,9 +7,9 @@ import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
 
 // Import modular server logic
-import { detectAssetType, getPrebuiltAudit, transformAudit } from "./src/server/auditFallbacks";
-import { generateHtmlReport } from "./src/server/htmlReport";
-import { scrapeWebsite } from "./src/server/scraper";
+import { detectAssetType, getPrebuiltAudit, transformAudit } from "./src/server/auditFallbacks.js";
+import { generateHtmlReport } from "./src/server/htmlReport.js";
+import { scrapeWebsite } from "./src/server/scraper.js";
 
 dotenv.config();
 
