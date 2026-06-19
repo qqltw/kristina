@@ -47,6 +47,89 @@ const anthropic = anthropicKey
     })
   : null;
 
+// Initialize Manus client
+const manusApiKey = process.env.MANUS_API_KEY;
+const manusBaseUrl = (process.env.MANUS_BASE_URL || "https://api.manus.ai").replace(/\/$/, "");
+const manusAgentProfile = process.env.MANUS_AGENT_PROFILE || "manus-1.6-lite";
+
+interface ManusAuditOptions {
+  prompt: string;
+  pollIntervalMs?: number;
+  maxWaitMs?: number;
+}
+
+async function runManusAudit({ prompt, pollIntervalMs = 4000, maxWaitMs = 240000 }: ManusAuditOptions): Promise<string | null> {
+  if (!manusApiKey) return null;
+
+  const headers = {
+    "x-manus-api-key": manusApiKey,
+    "Content-Type": "application/json",
+  };
+
+  const createRes = await fetch(`${manusBaseUrl}/v2/task.create`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      message: { content: prompt },
+      agent_profile: manusAgentProfile,
+      locale: "ru",
+      hide_in_task_list: true,
+      interactive_mode: false,
+    }),
+  });
+
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    throw new Error(`Manus task.create failed: ${createRes.status} ${errText}`);
+  }
+
+  const createJson: any = await createRes.json();
+  if (!createJson?.ok || !createJson?.task_id) {
+    throw new Error(`Manus task.create returned unexpected payload: ${JSON.stringify(createJson)}`);
+  }
+
+  const taskId = createJson.task_id as string;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+
+    const detailRes = await fetch(`${manusBaseUrl}/v2/task.detail?task_id=${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers,
+    });
+
+    if (!detailRes.ok) continue;
+    const detailJson: any = await detailRes.json();
+    const status = detailJson?.task?.status;
+    if (status === "stopped" || status === "waiting") break;
+    if (status === "error") {
+      throw new Error(`Manus task failed with status=error: ${JSON.stringify(detailJson)}`);
+    }
+  }
+
+  const msgRes = await fetch(
+    `${manusBaseUrl}/v2/task.listMessages?task_id=${encodeURIComponent(taskId)}&limit=50&order=desc`,
+    { method: "GET", headers }
+  );
+  if (!msgRes.ok) {
+    throw new Error(`Manus task.listMessages failed: ${msgRes.status}`);
+  }
+  const msgJson: any = await msgRes.json();
+  const messages: any[] = msgJson?.messages || [];
+
+  for (const m of messages) {
+    if (m?.type === "assistant_message" && m?.assistant_message?.content) {
+      const content = m.assistant_message.content;
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) {
+        return content.map((c: any) => (typeof c === "string" ? c : c?.text || "")).join("\n");
+      }
+    }
+  }
+  return null;
+}
+
 // Helper to sanitize and process URLs safely
 function cleanUrl(inputUrl: string): string {
   let clean = inputUrl.trim();
@@ -188,8 +271,48 @@ ${pd.looseInputs.length > 0 ? `Детали внешних полей: ${JSON.st
 
   let liveAuditCompleted = false;
 
+  // Общий системный промпт для всех LLM-провайдеров — задаёт жёсткий JSON-формат.
+  const auditSystemPrompt = `ROLE & OBJECTIVE:
+Ты — автономный ИИ-аудитор компании DonTech. Твоя цель — провести бескомпромиссный, жесткий и точечный технико-юридический аудит переданного цифрового актива (это может быть веб-сайт, профиль Instagram, сообщество ВКонтакте или Telegram-канал). На выходе ты обязан вернуть СТРОГО валидный JSON-объект без markdown-обёрток, без пояснений до или после.
+
+Структура JSON:
+{
+  "asset_info": { "type": "website|instagram|vk|telegram", "url": "...", "audit_date": "ДД.ММ.ГГГГ" },
+  "audit_summary": "Жесткое экспертное заключение с потенциальными штрафами в рублях.",
+  "scores": { "legal": 0-100, "optimization": 0-100, "geo": 0-100 },
+  "legal_audit":        { "issues": [ { "title": "...", "description": "...", "severity": "critical|warning", "fix_step": "..." } ] },
+  "optimization_audit": { "issues": [ { "title": "...", "description": "...", "severity": "critical|warning", "fix_step": "..." } ] },
+  "geo_audit":          { "issues": [ { "title": "...", "description": "...", "severity": "critical|warning", "fix_step": "..." } ] }
+}
+
+Для САЙТА: legal = ФЗ-152/реклама/ЗоЗПП, optimization = SEO/мета/H-теги/alt, geo = региональная привязка/карты/телефоны.
+Для СОЦСЕТЕЙ (VK/TG/Instagram): legal = оформление и реквизиты, optimization = контент/УТП/постинг, geo = виральность/Reels/CTA/маркировка erid.`;
+
+  // Manus идёт первым: если ключ задан — пытаемся через него.
+  if (manusApiKey) {
+    try {
+      console.log(`Connecting to Manus API (profile: ${manusAgentProfile})...`);
+      const userPrompt = `${auditSystemPrompt}
+
+Объект для анализа: ${queryDetails}
+
+${ScrapedPageContext}
+
+ВЕРНИ ТОЛЬКО JSON. Никакого markdown, никаких пояснений.`;
+      const manusText = await runManusAudit({ prompt: userPrompt });
+      if (manusText) {
+        const jsonStr = extractBalancedJson(manusText);
+        rawAuditData = JSON.parse(jsonStr);
+        liveAuditCompleted = true;
+        console.log("Manus successfully completed audit.");
+      }
+    } catch (manusError) {
+      console.error("Manus API Error, falling back to next provider:", manusError);
+    }
+  }
+
   // If Anthropic (Claude) is configured, prioritize it
-  if (anthropic) {
+  if (!liveAuditCompleted && anthropic) {
     try {
       const model = process.env.CLAUDE_MODEL || "claude-3-5-sonnet-20241022";
       console.log(`Connecting to Claude for audit using model: ${model}...`);
