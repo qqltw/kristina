@@ -18,6 +18,28 @@ const PORT = 3000;
 
 app.use(express.json());
 
+// Диагностический эндпоинт — открой /api/debug в браузере на проде,
+// убедись, что нужные env-ключи подхвачены Vercel.
+app.get("/api/debug", (_req, res) => {
+  res.json({
+    runtime: "vercel/serverless or local express",
+    env_status: {
+      MANUS_API_KEY: process.env.MANUS_API_KEY ? `set (len=${process.env.MANUS_API_KEY.length})` : "MISSING",
+      MANUS_AGENT_PROFILE: process.env.MANUS_AGENT_PROFILE || "default(manus-1.6-lite)",
+      MANUS_BASE_URL: process.env.MANUS_BASE_URL || "default(https://api.manus.ai)",
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ? "set" : "missing",
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY ? "set" : "missing",
+      VERCEL: process.env.VERCEL ? "yes" : "no",
+    },
+    expected_provider_order: [
+      process.env.MANUS_API_KEY ? "manus" : null,
+      process.env.ANTHROPIC_API_KEY ? "claude" : null,
+      process.env.GEMINI_API_KEY ? "gemini" : null,
+      "prebuilt-fallback",
+    ].filter(Boolean),
+  });
+});
+
 // Initialize Gemini Client
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = apiKey
@@ -58,7 +80,7 @@ interface ManusAuditOptions {
   maxWaitMs?: number;
 }
 
-async function runManusAudit({ prompt, pollIntervalMs = 4000, maxWaitMs = 240000 }: ManusAuditOptions): Promise<string | null> {
+async function runManusAudit({ prompt, pollIntervalMs = 2500, maxWaitMs = 50000 }: ManusAuditOptions): Promise<string | null> {
   if (!manusApiKey) return null;
 
   const headers = {
