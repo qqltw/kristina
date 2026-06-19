@@ -1,8 +1,6 @@
-node_modules/
-build/
-dist/
-coverage/
-.DS_Store
-*.log
-.env*
-!.env.example
+{
+  "name": "Технико-юридический аудит сайтов",
+  "description": "Автономный сервис для технико-юридического аудита сайтов с автоматической генерацией PDF-отчетов по критериям ФЗ-152, SEO и GEO.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
