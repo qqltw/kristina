@@ -1,9 +1,13 @@
-import puppeteer from "puppeteer";
-
-// Helper to scrape website elements via Puppeteer for high fidelity audit
+// Helper to scrape website elements via Puppeteer for high fidelity audit.
+// На Vercel/serverless puppeteer недоступен — функция возвращает success: false.
 export async function scrapeWebsite(url: string) {
-  let browser;
+  let browser: any;
+  if (process.env.VERCEL) {
+    return { success: false, error: "Puppeteer disabled in serverless" };
+  }
   try {
+    const mod: any = await import("puppeteer");
+    const puppeteer = mod.default || mod;
     console.log(`Auditor launching Puppeteer to scrape: ${url}`);
     browser = await puppeteer.launch({
       args: [

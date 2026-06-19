@@ -1,10 +1,22 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
-import puppeteer from "puppeteer";
 import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
+
+// На Vercel (serverless) Puppeteer не работает: нет Chromium, bundle вылетает за лимит.
+// Грузим его ЛЕНИВО — только если NODE_ENV !== "production" или не задан VERCEL.
+const isServerless = !!process.env.VERCEL;
+async function loadPuppeteer(): Promise<any | null> {
+  if (isServerless) return null;
+  try {
+    const mod: any = await import("puppeteer");
+    return mod.default || mod;
+  } catch (e) {
+    console.warn("Puppeteer не загрузился (это ок на serverless):", (e as Error).message);
+    return null;
+  }
+}
 
 // Import modular server logic
 import { detectAssetType, getPrebuiltAudit, transformAudit } from "./src/server/auditFallbacks.js";
@@ -585,8 +597,10 @@ ${ScrapedPageContext}`;
 
   const htmlContent = generateHtmlReport(auditResult, targetUrl);
 
-  // Attempt PDF compilation using Puppeteer
+  // Attempt PDF compilation using Puppeteer (ленивая загрузка, без верхнеуровневого import)
   try {
+    const puppeteer = await loadPuppeteer();
+    if (!puppeteer) throw new Error("Puppeteer unavailable in this environment");
     const browser = await puppeteer.launch({
       args: [
         "--no-sandbox",
@@ -639,6 +653,7 @@ ${ScrapedPageContext}`;
 // Setup dev/production environment handlers
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
