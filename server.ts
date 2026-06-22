@@ -21,6 +21,7 @@ async function loadPuppeteer(): Promise<any | null> {
 // Import modular server logic
 import { detectAssetType, getPrebuiltAudit, transformAudit } from "./src/server/auditFallbacks.js";
 import { generateHtmlReport } from "./src/server/htmlReport.js";
+import { buildManusAuditPrompt } from "./src/server/manusAuditPrompt.js";
 import { scrapeWebsite } from "./src/server/scraper.js";
 
 dotenv.config();
@@ -305,34 +306,17 @@ ${pd.looseInputs.length > 0 ? `Детали внешних полей: ${JSON.st
 
   let liveAuditCompleted = false;
 
-  // Общий системный промпт для всех LLM-провайдеров — задаёт жёсткий JSON-формат.
-  const auditSystemPrompt = `ROLE & OBJECTIVE:
-Ты — автономный ИИ-аудитор компании DonTech. Твоя цель — провести бескомпромиссный, жесткий и точечный технико-юридический аудит переданного цифрового актива (это может быть веб-сайт, профиль Instagram, сообщество ВКонтакте или Telegram-канал). На выходе ты обязан вернуть СТРОГО валидный JSON-объект без markdown-обёрток, без пояснений до или после.
-
-Структура JSON:
-{
-  "asset_info": { "type": "website|instagram|vk|telegram", "url": "...", "audit_date": "ДД.ММ.ГГГГ" },
-  "audit_summary": "Жесткое экспертное заключение с потенциальными штрафами в рублях.",
-  "scores": { "legal": 0-100, "optimization": 0-100, "geo": 0-100 },
-  "legal_audit":        { "issues": [ { "title": "...", "description": "...", "severity": "critical|warning", "fix_step": "..." } ] },
-  "optimization_audit": { "issues": [ { "title": "...", "description": "...", "severity": "critical|warning", "fix_step": "..." } ] },
-  "geo_audit":          { "issues": [ { "title": "...", "description": "...", "severity": "critical|warning", "fix_step": "..." } ] }
-}
-
-Для САЙТА: legal = ФЗ-152/реклама/ЗоЗПП, optimization = SEO/мета/H-теги/alt, geo = региональная привязка/карты/телефоны.
-Для СОЦСЕТЕЙ (VK/TG/Instagram): legal = оформление и реквизиты, optimization = контент/УТП/постинг, geo = виральность/Reels/CTA/маркировка erid.`;
-
   // Manus идёт первым: если ключ задан — пытаемся через него.
   if (manusApiKey) {
     try {
       console.log(`Connecting to Manus API (profile: ${manusAgentProfile})...`);
-      const userPrompt = `${auditSystemPrompt}
-
-Объект для анализа: ${queryDetails}
-
-${ScrapedPageContext}
-
-ВЕРНИ ТОЛЬКО JSON. Никакого markdown, никаких пояснений.`;
+      // Полная методология SEO + GEO(AI) как «движок» анализа + строгий JSON-контракт вывода.
+      const userPrompt = buildManusAuditPrompt({
+        queryDetails,
+        scrapedContext: ScrapedPageContext,
+        assetType: targetType,
+        auditDate: new Date().toLocaleDateString("ru-RU"),
+      });
       const manusText = await runManusAudit({ prompt: userPrompt });
       if (manusText) {
         const jsonStr = extractBalancedJson(manusText);
